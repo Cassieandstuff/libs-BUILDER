@@ -1,0 +1,177 @@
+# BuilderRun.cmake — BUILDER's build-time steps: cmake -DMODE=<files|tree|app|deploy|package> ... -P BuilderRun.cmake
+#
+# Lists arrive '|'-joined (one build-command argument each). Copies are content-compared (COPY_FILE ONLY_IF_DIFFERENT),
+# so an unchanged file is never rewritten in the stage, the MO2 mod or the tools folder.
+cmake_minimum_required(VERSION 3.25)
+
+function(_split out value)
+    string(REPLACE "|" ";" value "${value}")
+    list(FILTER value EXCLUDE REGEX "^$")
+    set(${out} "${value}" PARENT_SCOPE)
+endfunction()
+
+function(_copy src dst)
+    get_filename_component(dir "${dst}" DIRECTORY)
+    file(MAKE_DIRECTORY "${dir}")
+    file(COPY_FILE "${src}" "${dst}" ONLY_IF_DIFFERENT)
+endfunction()
+
+# Every file below <root> as a relative path, minus any path with a '_'-prefixed segment (templates, notes, scratch).
+function(_shipped out root)
+    file(GLOB_RECURSE all LIST_DIRECTORIES false RELATIVE "${root}" "${root}/*")
+    list(FILTER all EXCLUDE REGEX "(^|/)_")
+    set(${out} "${all}" PARENT_SCOPE)
+endfunction()
+
+if(MODE STREQUAL "files")
+    _split(files "${FILES}")
+    _split(optional "${OPTIONAL}")
+    foreach(f IN LISTS files)
+        get_filename_component(n "${f}" NAME)
+        _copy("${f}" "${DST}/${n}")
+    endforeach()
+    foreach(f IN LISTS optional)
+        get_filename_component(n "${f}" NAME)
+        if(EXISTS "${f}")
+            _copy("${f}" "${DST}/${n}")
+        else()
+            file(REMOVE "${DST}/${n}")
+        endif()
+    endforeach()
+
+elseif(MODE STREQUAL "tree")
+    if(OWNED)
+        file(REMOVE_RECURSE "${DST}")
+    endif()
+    if(NOT IS_DIRECTORY "${SRC}")
+        message(STATUS "BUILDER: nothing at ${SRC} yet")
+        return()
+    endif()
+    _shipped(rel "${SRC}")
+    foreach(r IN LISTS rel)
+        _copy("${SRC}/${r}" "${DST}/${r}")
+    endforeach()
+
+elseif(MODE STREQUAL "app")
+    # Top-level DLLs are rebuilt every time, so one dropped from the closure (or a Debug/Release switch) can't linger.
+    file(MAKE_DIRECTORY "${DST}")
+    file(GLOB stale "${DST}/*.dll")
+    if(stale)
+        file(REMOVE ${stale})
+    endif()
+
+    get_filename_component(exe_name "${EXE}" NAME)
+    _copy("${EXE}" "${DST}/${exe_name}")
+    if(PDB)
+        get_filename_component(pdb_name "${PDB}" NAME)
+        if(EXISTS "${PDB}")
+            _copy("${PDB}" "${DST}/${pdb_name}")
+        else()
+            file(REMOVE "${DST}/${pdb_name}")
+        endif()
+    endif()
+    _split(dlls "${RUNTIME_DLLS}")
+    foreach(d IN LISTS dlls)
+        get_filename_component(n "${d}" NAME)
+        _copy("${d}" "${DST}/${n}")
+    endforeach()
+
+    # Qt plugins are loaded at run time, never linked, so no dependency scan finds them; windeployqt knows the set.
+    # vcpkg's tools are release builds: a Debug exe needs its debug qtpaths wrapper and debug/bin on PATH.
+    if(WINDEPLOYQT)
+        set(args --no-translations --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler
+                 --no-opengl-sw --verbose 0)
+        get_filename_component(qtbin "${WINDEPLOYQT}" DIRECTORY)
+        if(QT_DEBUG AND EXISTS "${qtbin}/qtpaths.debug.bat")
+            list(PREPEND args --qtpaths "${qtbin}/qtpaths.debug.bat")
+            get_filename_component(debug_bin "${qtbin}/../../../debug/bin" ABSOLUTE)
+            file(TO_NATIVE_PATH "${debug_bin}" debug_bin)
+            set(ENV{PATH} "${debug_bin};$ENV{PATH}")
+        endif()
+        execute_process(COMMAND "${WINDEPLOYQT}" ${args} "${DST}/${exe_name}"
+            RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE o)
+        if(NOT r EQUAL 0)
+            message(FATAL_ERROR "BUILDER: windeployqt failed (${r}):\n${o}")
+        endif()
+    endif()
+
+    # Then the closure of everything staged (exe, its DLLs, the Qt plugins), resolved from the stage, the exe's
+    # build folder and vcpkg's bin; system DLLs stay out.
+    _split(search "${SEARCH}")
+    file(GLOB_RECURSE libs "${DST}/*.dll")
+    file(GET_RUNTIME_DEPENDENCIES
+        EXECUTABLES "${DST}/${exe_name}"
+        LIBRARIES ${libs}
+        RESOLVED_DEPENDENCIES_VAR resolved
+        UNRESOLVED_DEPENDENCIES_VAR unresolved
+        DIRECTORIES "${DST}" ${search}
+        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
+        POST_EXCLUDE_REGEXES "^[A-Za-z]:[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]")
+    file(TO_CMAKE_PATH "${DST}" dst_norm)
+    string(TOLOWER "${dst_norm}/" dst_prefix)
+    foreach(d IN LISTS resolved)
+        file(TO_CMAKE_PATH "${d}" d)
+        string(TOLOWER "${d}" dl)   # Windows path identity only: whether a resolved DLL already sits in the stage
+        string(FIND "${dl}" "${dst_prefix}" at)
+        if(NOT at EQUAL 0)
+            get_filename_component(n "${d}" NAME)
+            _copy("${d}" "${DST}/${n}")
+        endif()
+    endforeach()
+    if(unresolved)
+        message(STATUS "BUILDER: left to the system: ${unresolved}")
+    endif()
+
+elseif(MODE STREQUAL "deploy")
+    if(NOT IS_DIRECTORY "${SRC}")
+        message(FATAL_ERROR "BUILDER: no stage at ${SRC}")
+    endif()
+    _split(owned "${OWNED}")
+    _split(paired "${PAIRED}")
+    foreach(o IN LISTS owned)
+        file(REMOVE_RECURSE "${DST}/${o}")
+    endforeach()
+    foreach(p IN LISTS paired)
+        if(NOT EXISTS "${SRC}/${p}")
+            file(REMOVE "${DST}/${p}")
+        endif()
+    endforeach()
+    if(APP)
+        file(GLOB old RELATIVE "${DST}" "${DST}/*.dll")
+        foreach(d IN LISTS old)
+            if(NOT EXISTS "${SRC}/${d}")
+                file(REMOVE "${DST}/${d}")
+            endif()
+        endforeach()
+    endif()
+    file(GLOB_RECURSE all LIST_DIRECTORIES false RELATIVE "${SRC}" "${SRC}/*")
+    foreach(r IN LISTS all)
+        _copy("${SRC}/${r}" "${DST}/${r}")
+    endforeach()
+    message(STATUS "BUILDER: deployed -> ${DST}")
+
+elseif(MODE STREQUAL "package")
+    # Release zips are lean: everything staged except debug symbols, at the archive root (MO2 / Vortex install it as is).
+    file(REMOVE_RECURSE "${TMP}")
+    file(GLOB_RECURSE all LIST_DIRECTORIES false RELATIVE "${SRC}" "${SRC}/*")
+    list(FILTER all EXCLUDE REGEX "\\.pdb$")
+    foreach(r IN LISTS all)
+        _copy("${SRC}/${r}" "${TMP}/${r}")
+    endforeach()
+    file(GLOB entries RELATIVE "${TMP}" "${TMP}/*")
+    if(NOT entries)
+        message(FATAL_ERROR "BUILDER: nothing staged at ${SRC} to package")
+    endif()
+    get_filename_component(zipdir "${ZIP}" DIRECTORY)
+    file(MAKE_DIRECTORY "${zipdir}")
+    file(REMOVE "${ZIP}")
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cf "${ZIP}" --format=zip ${entries}
+        WORKING_DIRECTORY "${TMP}" RESULT_VARIABLE r)
+    if(NOT r EQUAL 0)
+        message(FATAL_ERROR "BUILDER: zipping ${ZIP} failed (${r})")
+    endif()
+    message(STATUS "BUILDER: packaged -> ${ZIP}")
+
+else()
+    message(FATAL_ERROR "BuilderRun.cmake: unknown MODE '${MODE}'")
+endif()
