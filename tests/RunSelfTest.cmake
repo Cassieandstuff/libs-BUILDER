@@ -66,6 +66,7 @@ present("${m}/demo/schema/a.yaml")
 absent("${m}/demo/schema/stale.yaml")
 present("${m}/plugins/Demo.hky")
 present("${m}/plugins/Skyrim.hky")
+present("${m}/meshes/_1stperson/a.hkx")
 
 set(a "${tools}/Demo App")
 present("${a}/DemoApp.exe")

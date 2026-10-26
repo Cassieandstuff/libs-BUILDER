@@ -26,7 +26,7 @@ governs both.
 ```cmake
 builder_stage_plugin(<target> MOD "<Mod Name>")
 builder_stage_files(MOD "<Mod Name>" DIR <source dir> [TO <subpath>] [OWNED])
-builder_stage_generated(MOD "<Mod Name>" DIR <build dir> DEPENDS <target>... [TO <subpath>] [OWNED])
+builder_stage_generated(MOD|APP "<Name>" DIR <build dir> DEPENDS <target>... [TO <subpath>] [OWNED])
 builder_stage_app(<target> APP "<App Name>" [FILES <dir> AS <name>]...)
 builder_package(MOD|APP "<Name>" [VERSION <v>])
 ```
@@ -35,13 +35,14 @@ builder_package(MOD|APP "<Name>" [VERSION <v>])
 |---|---|
 | `builder_stage_plugin` | the plugin DLL and its `.pdb` → `SKSE/Plugins/` |
 | `builder_stage_files` | a source tree (`Data/<x>`, a schema folder, …) → the product root or `TO` |
-| `builder_stage_generated` | a tree the build makes (packed bundles, compiled menus); `DEPENDS` builds it first |
+| `builder_stage_generated` | a tree the build makes (packed bundles, compiled menus, a stamped schema), verbatim; `DEPENDS` builds it first |
 | `builder_stage_app` | the exe, its `.pdb`, every DLL it loads, Qt's plugins (via `windeployqt` when the target links Qt 6), and each `FILES` folder as `<name>` |
 | `builder_package` | adds a zip of the stage to the `package` target |
 
 Rules every stage follows:
 
-- **`_` means "not shipped"**: any path with a `_`-prefixed folder or file, at any depth, is left out.
+- **`_` means "not shipped" in authored trees** (`builder_stage_files`, app `FILES`): any path with a `_`-prefixed
+  folder or file, at any depth, is left out. Generated trees are staged verbatim.
 - **Merge by default**: deploy copies a file only when its contents differ and never deletes what it didn't stage
   (a regenerated bundle beside yours survives). `OWNED` marks a subfolder BUILDER controls completely: it is cleared
   in the stage and at the destination before copying. `FILES` folders of an app are always owned.
