@@ -27,7 +27,7 @@ governs both.
 builder_stage_plugin(<target> MOD "<Mod Name>")
 builder_stage_files(MOD "<Mod Name>" DIR <source dir> [TO <subpath>] [OWNED])
 builder_stage_generated(MOD|APP "<Name>" DIR <build dir> DEPENDS <target>... [TO <subpath>] [OWNED])
-builder_stage_app(<target> APP "<App Name>" [FILES <dir> AS <name>]...)
+builder_stage_app(<target> APP "<App Name>" [LOADED <pattern>...] [FILES <dir> AS <name>]...)
 builder_package(MOD|APP "<Name>" [VERSION <v>])
 ```
 
@@ -36,8 +36,8 @@ builder_package(MOD|APP "<Name>" [VERSION <v>])
 | `builder_stage_plugin` | the plugin DLL and its `.pdb` → `SKSE/Plugins/` |
 | `builder_stage_files` | a source tree (`Data/<x>`, a schema folder, …) → the product root or `TO` |
 | `builder_stage_generated` | a tree the build makes (packed bundles, compiled menus, a stamped schema), verbatim; `DEPENDS` builds it first |
-| `builder_stage_app` | the exe, its `.pdb`, every DLL it loads, Qt's plugins (via `windeployqt` when the target links Qt 6), and each `FILES` folder as `<name>` |
-| `builder_package` | adds a zip of the stage to the `package` target |
+| `builder_stage_app` | the exe, its `.pdb`, every DLL it loads, Qt's plugins (via `windeployqt` when the target links Qt 6), the DLLs it loads by name at run time (`LOADED`: file patterns in the exe's build folder, e.g. a render backend), and each `FILES` folder as `<name>` |
+| `builder_package` | adds a zip of the stage to the `package` target (`builder-package` when a dependency enabled CPack, which reserves `package`) |
 
 Rules every stage follows:
 
@@ -78,6 +78,9 @@ touching the environment.
 cmake --build <build dir> --config RelWithDebInfo                    # builds, stages, deploys
 cmake --build <build dir> --config RelWithDebInfo --target package   # release zips (no .pdb)
 ```
+
+A dependency that includes CPack (Diligent does) reserves `package`; configure then says so and the zips build
+with `--target builder-package`.
 
 ## Self-test
 

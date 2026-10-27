@@ -124,6 +124,8 @@ function(_builder_app_step id target out)
         list(APPEND search "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/$<$<CONFIG:Debug>:debug/>bin")
     endif()
     list(JOIN search "|" search)
+    get_property(loaded GLOBAL PROPERTY BUILDER_${id}_LOADED)
+    list(JOIN loaded "|" loaded)
 
     set(qt "")
     get_target_property(libs ${target} LINK_LIBRARIES)
@@ -140,7 +142,7 @@ function(_builder_app_step id target out)
     set(${out} COMMAND "${CMAKE_COMMAND}" -DMODE=app
         "-DEXE=$<TARGET_FILE:${target}>" ${pdb}
         "-DRUNTIME_DLLS=$<JOIN:$<TARGET_RUNTIME_DLLS:${target}>,|>"
-        "-DSEARCH=${search}" ${qt}
+        "-DSEARCH=${search}" "-DLOADED=${loaded}" ${qt}
         "-DDST=${stage}"
         -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/BuilderRun.cmake" PARENT_SCOPE)
 
@@ -234,12 +236,33 @@ function(_builder_emit id)
             VERBATIM)
         add_dependencies(builder-package-${id} ${driver})
         set_target_properties(builder-package-${id} PROPERTIES FOLDER "BUILDER")
-        if(NOT TARGET package)
-            add_custom_target(package)
-            set_target_properties(package PROPERTIES FOLDER "BUILDER")
+        set_property(GLOBAL APPEND PROPERTY BUILDER_PACKAGES builder-package-${id})
+        get_property(umbrella GLOBAL PROPERTY BUILDER_PACKAGE_UMBRELLA)
+        get_property(armed GLOBAL PROPERTY BUILDER_PACKAGE_ARMED)
+        if(umbrella)
+            add_dependencies(${umbrella} builder-package-${id})
+        elseif(NOT armed)
+            set_property(GLOBAL PROPERTY BUILDER_PACKAGE_ARMED TRUE)
+            cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _builder_package_target)
         endif()
-        add_dependencies(package builder-package-${id})
     endif()
+endfunction()
+
+# CMake reserves `package` for CPack once any project in the tree includes CPack (Diligent does), wherever that
+# happens: so the zips' umbrella is named at the end of the top-level configure, when CPackConfig.cmake shows it.
+# Products in the top-level directory are wired after it and join it then.
+function(_builder_package_target)
+    set(umbrella package)
+    if(EXISTS "${CMAKE_BINARY_DIR}/CPackConfig.cmake")
+        set(umbrella builder-package)
+        message(STATUS "BUILDER: a dependency enabled CPack, which owns the `package` target here; build the zips "
+                       "with --target builder-package")
+    endif()
+    get_property(zips GLOBAL PROPERTY BUILDER_PACKAGES)
+    add_custom_target(${umbrella})
+    set_target_properties(${umbrella} PROPERTIES FOLDER "BUILDER")
+    add_dependencies(${umbrella} ${zips})
+    set_property(GLOBAL PROPERTY BUILDER_PACKAGE_UMBRELLA ${umbrella})
 endfunction()
 
 
@@ -290,12 +313,13 @@ function(builder_stage_generated)
     _builder_tree(${id} "${A_DIR}" "${A_TO}" "${A_OWNED}" 0)
 endfunction()
 
-# builder_stage_app(<target> APP "<App Name>" [FILES <dir> AS <name>]...)
+# builder_stage_app(<target> APP "<App Name>" [LOADED <pattern>...] [FILES <dir> AS <name>]...)
 function(builder_stage_app target)
-    cmake_parse_arguments(PARSE_ARGV 1 A "" "APP" "FILES")
+    cmake_parse_arguments(PARSE_ARGV 1 A "" "APP" "FILES;LOADED")
     _builder_product(id APP "${A_APP}")
     _builder_driver(${id} ${target})
     set_property(GLOBAL PROPERTY BUILDER_${id}_APP_TARGET ${target})
+    set_property(GLOBAL APPEND PROPERTY BUILDER_${id}_LOADED ${A_LOADED})
     list(LENGTH A_FILES n)
     math(EXPR rem "${n} % 3")
     if(NOT rem EQUAL 0)

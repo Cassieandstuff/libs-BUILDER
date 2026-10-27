@@ -72,6 +72,7 @@ set(a "${tools}/Demo App")
 present("${a}/DemoApp.exe")
 present("${a}/DemoApp.pdb")
 present("${a}/DemoDep.dll")
+present("${a}/DemoLoaded.dll")
 present("${a}/data/x.txt")
 absent("${a}/Old.dll")
 absent("${a}/data/stale.txt")
@@ -109,3 +110,14 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -S "${src}" -B "${WORK}/build-off" ${
     RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE o)
 expect("r;EQUAL;0" "BUILDER_DEPLOY=OFF configures with a missing root")
 expect("o;MATCHES;deploy off \\(BUILDER_DEPLOY=OFF\\)" "BUILDER_DEPLOY=OFF says so")
+
+# CPack in the tree owns `package`: configure still succeeds and the zips build under builder-package.
+file(REMOVE "${modzip}" "${appzip}")
+execute_process(COMMAND "${CMAKE_COMMAND}" -S "${src}" -B "${WORK}/build-cpack" ${gen_args}
+        "-DBUILDER_ROOT=${BUILDER_ROOT}" -DBUILDER_DEPLOY=OFF -DSELFTEST_CPACK=ON
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE o)
+expect("r;EQUAL;0" "configure succeeds beside CPack")
+expect("o;MATCHES;--target builder-package" "beside CPack, configure names the zips' target")
+run("${CMAKE_COMMAND}" --build "${WORK}/build-cpack" --config Debug --target builder-package)
+present("${modzip}")
+present("${appzip}")

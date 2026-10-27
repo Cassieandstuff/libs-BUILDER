@@ -80,6 +80,18 @@ elseif(MODE STREQUAL "app")
         _copy("${d}" "${DST}/${n}")
     endforeach()
 
+    # DLLs the app loads by name at run time (render backends, shader compilers) are imported by nothing, so no scan
+    # finds them; the consumer names them as patterns in the exe's build folder, where their own build put them.
+    _split(loaded "${LOADED}")
+    get_filename_component(exe_dir "${EXE}" DIRECTORY)
+    foreach(pattern IN LISTS loaded)
+        file(GLOB hits "${exe_dir}/${pattern}")
+        foreach(d IN LISTS hits)
+            get_filename_component(n "${d}" NAME)
+            _copy("${d}" "${DST}/${n}")
+        endforeach()
+    endforeach()
+
     # Qt plugins are loaded at run time, never linked, so no dependency scan finds them; windeployqt knows the set.
     # vcpkg's tools are release builds: a Debug exe needs its debug qtpaths wrapper and debug/bin on PATH.
     if(WINDEPLOYQT)
